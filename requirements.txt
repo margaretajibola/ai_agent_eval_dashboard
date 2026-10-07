@@ -1,4 +1,3 @@
-litellm
 python-dotenv
 requests
 
@@ -11,11 +10,6 @@ langchain-core
 langchain
 langchain-community
 
-# rag
-datasets
-rank_bm25
-ddgs
-
 # gaia agent
 openai
 beautifulsoup4
@@ -23,15 +17,7 @@ pandas
 openpyxl
 youtube-transcript-api
 huggingface_hub
-
-# llamaindex
-llama-index-core
-llama-index-embeddings-openai
-llama-index-llms-openai
-llama-index-workflows
-
-# observability
-langfuse
+datasets
 
 # dashboard
 streamlit

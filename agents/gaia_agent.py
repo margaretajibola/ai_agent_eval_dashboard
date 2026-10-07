@@ -223,8 +223,16 @@ chat_anthropic = ChatAnthropic(
 # ollama chat model for the agent
 chat_oss = ChatOllama(model="llama3.1", temperature=0)
 
+# grok chat model for the agent
+chat_grok = ChatOpenAI(
+    model="grok-3",
+    api_key=os.getenv("XAI_API_KEY"),
+    base_url="https://api.x.ai/v1",
+    temperature=0,
+)
+
 provider = os.getenv("MODEL_PROVIDER", "openai")
-chat = {"openai": chat_openai, "anthropic": chat_anthropic, "ollama": chat_oss}[provider]
+chat = {"openai": chat_openai, "anthropic": chat_anthropic, "ollama": chat_oss, "grok": chat_grok}[provider]
 
 tools = [search_tool, transcribe_audio, read_excel, analyze_image, fetch_webpage, read_text_file, execute_python_file, sum_excel_column, execute_python_code]
 chat_with_tools = chat.bind_tools(tools)
