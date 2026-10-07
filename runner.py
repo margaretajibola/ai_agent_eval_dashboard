@@ -1,5 +1,6 @@
 import argparse
 import json
+import logging
 import os
 import time
 from datetime import datetime
@@ -10,6 +11,9 @@ from huggingface_hub import hf_hub_download
 from dotenv import load_dotenv
 
 load_dotenv(override=True)
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+logger = logging.getLogger(__name__)
 
 parser = argparse.ArgumentParser(
     description="Run the GAIA benchmark agent and evaluate performance across models.",
@@ -101,7 +105,7 @@ def attachment_path(task_id: str):
     try:
         return hf_hub_download(repo_id=GAIA_REPO, filename=rel, repo_type="dataset")
     except Exception as e:
-        print(f"Could not download attachment for {task_id}: {e}")
+        logger.warning("Could not download attachment for %s: %s", task_id, type(e).__name__)
         return None
 
 
@@ -111,12 +115,12 @@ if __name__ == "__main__":
     if args.task_id:
         questions = [q for q in questions if q["task_id"] == args.task_id]
         if not questions:
-            print(f"No question found with task_id '{args.task_id}'")
+            logger.error("No question found with task_id '%s'", args.task_id)
             exit(1)
     elif args.limit:
         questions = questions[:args.limit]
 
-    print(f"Running {len(questions)} question(s) with model: {args.model}")
+    logger.info("Running %d question(s) with model: %s", len(questions), args.model)
 
     records = []
     for i, q in enumerate(questions, 1):
@@ -124,13 +128,13 @@ if __name__ == "__main__":
         file_path = attachment_path(task_id) if q.get("file_name") else None
         expected = str(EXPECTED.get(task_id, ""))
 
-        print(f"[{i}/{len(questions)}] {task_id}")
+        logger.info("[%d/%d] %s", i, len(questions), task_id)
         try:
             out = run(q["question"], file_path)
             error = None
         except Exception as e:
             out = {"answer": "", "tool_calls": [], "input_tokens": 0, "output_tokens": 0, "latency_s": 0}
-            error = str(e)
+            error = type(e).__name__
 
         correct = out["answer"].strip().lower() == expected.strip().lower()
         records.append({
@@ -145,7 +149,7 @@ if __name__ == "__main__":
             "output_tokens": out["output_tokens"],
             "error": error,
         })
-        print(f"  {'✅' if correct else '❌'}  got: {out['answer']}  expected: {expected}")
+        logger.info("  %s  got: %s  expected: %s", '✅' if correct else '❌', out['answer'], expected)
         if i < len(questions):
             time.sleep(args.delay)
 
@@ -156,4 +160,4 @@ if __name__ == "__main__":
         json.dump({"model": args.model, "timestamp": stamp, "records": records}, f, indent=2)
 
     passed = sum(r["correct"] for r in records)
-    print(f"\n{passed}/{len(records)} correct. Results saved to {path}")
+    logger.info("%d/%d correct. Results saved to %s", passed, len(records), path)

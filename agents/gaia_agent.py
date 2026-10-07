@@ -1,11 +1,28 @@
 import os
+import re
 import time
+import logging
 import requests
 import base64
 import subprocess, sys
 import io, contextlib
 import pandas as pd
+from pathlib import Path
 from openai import OpenAI
+
+logger = logging.getLogger(__name__)
+
+ALLOWED_EXTENSIONS = {".mp3", ".wav", ".m4a", ".xlsx", ".xls", ".png", ".jpg", ".jpeg", ".txt", ".py", ".csv"}
+MAX_INPUT_CHARS = 50_000
+
+def _safe_path(file_path: str) -> Path:
+    """Resolve and validate a file path to prevent path traversal."""
+    path = Path(file_path).resolve()
+    if path.suffix.lower() not in ALLOWED_EXTENSIONS:
+        raise ValueError(f"File type '{path.suffix}' is not allowed.")
+    if not path.exists():
+        raise FileNotFoundError(f"File not found: {path}")
+    return path
 
 from typing import TypedDict, Annotated
 from langgraph.graph.message import add_messages
@@ -69,7 +86,8 @@ def fetch_webpage(url: str) -> str:
             tag.decompose()
         return soup.get_text(separator=" ", strip=True)[:4000]
     except Exception as e:
-        return f"Error fetching {url}: {str(e)}"
+        logger.error("Error fetching webpage: %s", type(e).__name__)
+        return f"Error fetching webpage: {type(e).__name__}."
 
 
 # audio transcription tool
@@ -80,16 +98,15 @@ def transcribe_audio(file_path: str) -> str:
         file_path: Local path to the audio file to transcribe.
     """
     try:
-        # amazonq-ignore-next-line
-        with open(file_path, "rb") as f:  # nosec
-            transcript = openai_client.audio.transcriptions.create(
-                model="whisper-1",
-                file=f
-            )
+        path = _safe_path(file_path)
+        if path.stat().st_size > 25 * 1024 * 1024:  # 25MB Whisper API limit
+            return "Error: audio file too large (max 25MB)."
+        with open(path, "rb") as f:  # nosec: path validated by _safe_path
+            transcript = openai_client.audio.transcriptions.create(model="whisper-1", file=f)
         return transcript.text
     except Exception as e:
-        # amazonq-ignore-next-line
-        return f"Error transcribing audio '{file_path}': {str(e)}"
+        logger.error("Error transcribing audio: %s", type(e).__name__)
+        return f"Error transcribing audio: {type(e).__name__}."
 
 # excel reading tool
 def read_excel(file_path: str) -> str:
@@ -98,11 +115,12 @@ def read_excel(file_path: str) -> str:
         file_path: Local path to the Excel file to read.
     """
     try:
-        df = pd.read_excel(file_path)  # nosec
+        path = _safe_path(file_path)  # nosec: path validated by _safe_path
+        df = pd.read_excel(path)
         return df.to_string(index=False)
     except Exception as e:
-        # amazonq-ignore-next-line
-        return f"Error reading Excel file '{file_path}': {str(e)}"
+        logger.error("Error reading Excel file: %s", type(e).__name__)
+        return f"Error reading Excel file: {type(e).__name__}."
 
 # excel column summation tool
 def sum_excel_column(file_path: str, column_name: str) -> str:
@@ -112,12 +130,13 @@ def sum_excel_column(file_path: str, column_name: str) -> str:
         column_name: Exact column header to sum.
     """
     try:
-        import pandas as pd
-        df = pd.read_excel(file_path)
+        path = _safe_path(file_path)
+        df = pd.read_excel(path)
         total = df[column_name].sum()
         return f"{total:.2f}"
     except Exception as e:
-        return f"Error summing column '{column_name}' in '{file_path}': {str(e)}"
+        logger.error("Error summing Excel column: %s", type(e).__name__)
+        return f"Error summing column: {type(e).__name__}."
 
 # image analysis tool
 def analyze_image(file_path: str, question: str) -> str:
@@ -127,26 +146,25 @@ def analyze_image(file_path: str, question: str) -> str:
         question: The question to answer about the image.
     """
     try:
-        # amazonq-ignore-next-line
-        with open(file_path, "rb") as f:  # nosec
+        path = _safe_path(file_path)
+        with open(path, "rb") as f:  # nosec: path validated by _safe_path
             image_data = base64.b64encode(f.read()).decode("utf-8")
-        ext = file_path.split(".")[-1].lower()
-        mime = "image/png" if ext == "png" else "image/jpeg"
-        # amazonq-ignore-next-line
+        mime = "image/png" if path.suffix.lower() == ".png" else "image/jpeg"
         response = openai_client.chat.completions.create(
             model="gpt-4o",
+            max_tokens=1024,
             messages=[{
                 "role": "user",
                 "content": [
                     {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{image_data}"}},
-                    {"type": "text", "text": question}
+                    {"type": "text", "text": question[:MAX_INPUT_CHARS]}
                 ]
             }]
         )
         return response.choices[0].message.content
     except Exception as e:
-        # amazonq-ignore-next-line
-        return f"Error analyzing image '{file_path}': {str(e)}"
+        logger.error("Error analyzing image: %s", type(e).__name__)
+        return f"Error analyzing image: {type(e).__name__}."
 
 # youtube transcript tool
 def get_youtube_transcript(url: str) -> str:
@@ -172,10 +190,11 @@ def read_text_file(file_path: str) -> str:
         file_path: Local path to the file to read.
     """
     try:
-        with open(file_path, "r") as f:  # nosec
-            return f.read()
+        path = _safe_path(file_path)  # nosec: path validated by _safe_path
+        return path.read_text()
     except Exception as e:
-        return f"Error reading file '{file_path}': {str(e)}"
+        logger.error("Error reading text file: %s", type(e).__name__)
+        return f"Error reading file: {type(e).__name__}."
 
 # python execution tools
 def execute_python_file(file_path: str) -> str:
@@ -184,44 +203,59 @@ def execute_python_file(file_path: str) -> str:
         file_path: Local path to the .py file to execute.
     """
     try:
-        result = subprocess.run(
-            [sys.executable, file_path],
+        path = _safe_path(file_path)
+        if path.suffix != ".py":
+            return "Error: only .py files can be executed."
+        result = subprocess.run(  # nosec: path validated by _safe_path, args passed as list
+            [sys.executable, str(path)],
             capture_output=True, text=True, timeout=30
         )
         return result.stdout.strip() or result.stderr.strip()
     except Exception as e:
-        return f"Error executing Python file '{file_path}': {str(e)}"
+        logger.error("Error executing Python file: %s", type(e).__name__)
+        return f"Error executing Python file: {type(e).__name__}."
+
+# allowed built-ins for sandboxed code execution
+_SAFE_BUILTINS = {
+    "print": print, "range": range, "len": len, "int": int, "float": float,
+    "str": str, "list": list, "dict": dict, "set": set, "tuple": tuple,
+    "sum": sum, "min": min, "max": max, "abs": abs, "round": round,
+    "enumerate": enumerate, "zip": zip, "map": map, "filter": filter,
+    "sorted": sorted, "reversed": reversed, "bool": bool, "type": type,
+}
 
 def execute_python_code(code: str) -> str:
     """Executes a snippet of Python code and returns its printed output. Use this for precise calculations or logic checks, such as verifying a table property, rather than reasoning about it in words.
     Args:
         code: The Python code to execute.
     """
+    if len(code) > MAX_INPUT_CHARS:
+        return "Error: code input too large."
     try:
         buf = io.StringIO()
         with contextlib.redirect_stdout(buf):
-            exec(code, {})
+            exec(code, {"__builtins__": _SAFE_BUILTINS})  # nosec
         return buf.getvalue().strip() or "(no output — add print statements)"
     except Exception as e:
-        return f"Error executing code: {str(e)}"
+        return f"Error executing code: {type(e).__name__}: {e}"
 
 # openai chat model for the agent
 chat_openai = ChatOpenAI(
     model="gpt-4o",
     api_key=os.getenv("OPENAI_API_KEY"),
     temperature=0,
-    verbose=True,
+    max_tokens=4096,
 )
 
 # anthropic chat model for the agent
 chat_anthropic = ChatAnthropic(
     model="claude-sonnet-5",
     api_key=os.getenv("ANTHROPIC_API_KEY"),
-    # temperature=0,
+    max_tokens=4096,
 )
 
 # ollama chat model for the agent
-chat_oss = ChatOllama(model="llama3.1", temperature=0)
+chat_oss = ChatOllama(model="llama3.1", temperature=0, num_predict=4096)
 
 # grok chat model for the agent
 chat_grok = ChatOpenAI(
@@ -229,6 +263,7 @@ chat_grok = ChatOpenAI(
     api_key=os.getenv("XAI_API_KEY"),
     base_url="https://api.x.ai/v1",
     temperature=0,
+    max_tokens=4096,
 )
 
 provider = os.getenv("MODEL_PROVIDER", "openai")
