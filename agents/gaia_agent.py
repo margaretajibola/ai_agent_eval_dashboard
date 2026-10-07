@@ -1,7 +1,6 @@
 import os
 import re
 import time
-import logging
 import requests
 import base64
 import subprocess, sys
@@ -9,8 +8,6 @@ import io, contextlib
 import pandas as pd
 from pathlib import Path
 from openai import OpenAI
-
-logger = logging.getLogger(__name__)
 
 ALLOWED_EXTENSIONS = {".mp3", ".wav", ".m4a", ".xlsx", ".xls", ".png", ".jpg", ".jpeg", ".txt", ".py", ".csv"}
 MAX_INPUT_CHARS = 50_000
@@ -86,7 +83,6 @@ def fetch_webpage(url: str) -> str:
             tag.decompose()
         return soup.get_text(separator=" ", strip=True)[:4000]
     except Exception as e:
-        logger.error("Error fetching webpage: %s", type(e).__name__)
         return f"Error fetching webpage: {type(e).__name__}."
 
 
@@ -105,7 +101,6 @@ def transcribe_audio(file_path: str) -> str:
             transcript = openai_client.audio.transcriptions.create(model="whisper-1", file=f)
         return transcript.text
     except Exception as e:
-        logger.error("Error transcribing audio: %s", type(e).__name__)
         return f"Error transcribing audio: {type(e).__name__}."
 
 # excel reading tool
@@ -119,7 +114,6 @@ def read_excel(file_path: str) -> str:
         df = pd.read_excel(path)
         return df.to_string(index=False)
     except Exception as e:
-        logger.error("Error reading Excel file: %s", type(e).__name__)
         return f"Error reading Excel file: {type(e).__name__}."
 
 # excel column summation tool
@@ -135,7 +129,6 @@ def sum_excel_column(file_path: str, column_name: str) -> str:
         total = df[column_name].sum()
         return f"{total:.2f}"
     except Exception as e:
-        logger.error("Error summing Excel column: %s", type(e).__name__)
         return f"Error summing column: {type(e).__name__}."
 
 # image analysis tool
@@ -163,7 +156,6 @@ def analyze_image(file_path: str, question: str) -> str:
         )
         return response.choices[0].message.content
     except Exception as e:
-        logger.error("Error analyzing image: %s", type(e).__name__)
         return f"Error analyzing image: {type(e).__name__}."
 
 # youtube transcript tool
@@ -193,7 +185,6 @@ def read_text_file(file_path: str) -> str:
         path = _safe_path(file_path)  # nosec: path validated by _safe_path
         return path.read_text()
     except Exception as e:
-        logger.error("Error reading text file: %s", type(e).__name__)
         return f"Error reading file: {type(e).__name__}."
 
 # python execution tools
@@ -212,7 +203,6 @@ def execute_python_file(file_path: str) -> str:
         )
         return result.stdout.strip() or result.stderr.strip()
     except Exception as e:
-        logger.error("Error executing Python file: %s", type(e).__name__)
         return f"Error executing Python file: {type(e).__name__}."
 
 # allowed built-ins for sandboxed code execution
